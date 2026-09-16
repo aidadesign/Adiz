@@ -1,0 +1,666 @@
+<pre><code class="language-html">&lt;!doctype html&gt;
+&lt;html lang="ru"&gt;
+&lt;head&gt;
+&lt;meta charset="utf-8"&gt;
+&lt;meta name="viewport"
+      content="width=device-width,initial-scale=1,maximum-scale=1"&gt;
+&lt;meta name="theme-color" content="#faf9fd"&gt;
+&lt;title&gt;ADIZ — прототип&lt;/title&gt;
+&lt;style&gt;
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px system-ui, sans-serif;
+    color: #302b40;
+    background: #faf9fd;
+    overflow: hidden;
+  }
+  header {
+    height: 54px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 18px;
+    background: white;
+    border-bottom: 1px solid #eeeaf4;
+  }
+  strong { color: #7852d6; letter-spacing: 3px; font-size: 21px; }
+  #status { font-size: 12px; color: #756d85; }
+  #board {
+    position: fixed;
+    inset: 54px 0 132px;
+    overflow: hidden;
+    background: #fff;
+  }
+  canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    touch-action: none;
+  }
+  footer {
+    position: fixed;
+    bottom: 0;
+    width: 100%;
+    height: 132px;
+    padding: 10px 12px;
+    background: #fff;
+    border-top: 1px solid #eeeaf4;
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    overflow-x: auto;
+    white-space: nowrap;
+    padding-bottom: 8px;
+  }
+  button {
+    border: 1px solid #e7e1f0;
+    border-radius: 12px;
+    padding: 10px 13px;
+    background: white;
+    color: inherit;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  button.active { background: #eee7ff; border-color: #ae91ed; }
+  input[type=range] { width: 100px; accent-color: #8057d8; }
+  #colorButton { display: flex; align-items: center; gap: 8px; }
+  #sample {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #7252c7;
+  }
+  .hint { color: #847b92; font-size: 11px; }
+  dialog {
+    border: 1px solid #eee;
+    border-radius: 22px;
+    padding: 22px;
+    max-width: calc(100vw - 24px);
+    box-shadow: 0 15px 70px #30204030;
+  }
+  dialog::backdrop { background: #25183b35; }
+  #wheel {
+    width: 210px;
+    height: 210px;
+    border-radius: 50%;
+    margin: 12px auto;
+    touch-action: none;
+    background:
+      radial-gradient(circle, white, transparent 70%),
+      conic-gradient(from 90deg,
+        red, yellow, lime, cyan, blue, magenta, red);
+    border: 1px solid #eee;
+    position: relative;
+  }
+  #dot {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border: 2px solid white;
+    box-shadow: 0 0 0 1px #555;
+    border-radius: 50%;
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+  }
+  #swatches { display: flex; gap: 8px; margin: 12px 0; }
+  #swatches button {
+    width: 30px; height: 30px; padding: 0; border-radius: 50%;
+  }
+  #hex {
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    width: 110px;
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;header&gt;
+  &lt;strong&gt;ADIZ&lt;/strong&gt;
+  &lt;span id="status"&gt;Локальный прототип&lt;/span&gt;
+&lt;/header&gt;
+
+&lt;div id="board"&gt;&lt;canvas id="canvas"&gt;&lt;/canvas&gt;&lt;/div&gt;
+
+&lt;footer&gt; <div class="row" id="tools">
+    <button data-tool="pen" class="active">Перо</button>
+    <button data-tool="ink">Ручка</button>
+    <button data-tool="pencil">Карандаш</button>
+    <button data-tool="water">Акварель</button>
+    <button data-tool="eraser">Ластик</button>
+    <button data-tool="marker">Выделитель</button>
+  </div>
+  <div class="row">
+    <button id="colorButton"><i id="sample"></i>Цвет</button>
+    <label>Размер <input id="size" type="range" min="1" max="60" value="5"></label>
+    <label>Нажим <input id="sensitivity" type="range"
+      min="0.3" max="2" step="0.1" value="1"></label>
+    <button id="undo">Отменить</button>
+    <button id="home">К началу</button>
+  </div>
+  <div class="hint">S Pen — рисование · два пальца — перемещение и масштаб</div>
+</footer>
+
+<dialog id="palette">
+  <b>Палитра ADIZ</b>
+  <div id="wheel"><span id="dot"></span></div>
+  <div class="row">
+    Светлота
+    <input id="lightness" type="range" min="5" max="95" value="55">
+  </div>
+  <div id="swatches"></div>
+  <div class="row">
+    <input id="hex" value="#7252c7" maxlength="7" aria-label="Цвет HEX">
+    <button id="closePalette">Готово</button>
+  </div>
+</dialog>
+
+<script>
+const $ = id => document.getElementById(id);
+const canvas = $('canvas');
+const ctx = canvas.getContext('2d');
+const KEY = 'adiz-prototype-v1';
+
+let strokes = [];
+let camera = { x: 0, y: 0, z: 1 };
+let tool = 'pen';
+let color = '#7252c7';
+let active = null;
+let activePointer = null;
+let touches = new Map();
+let gesture = null;
+let width = 0, height = 0, dpr = 1;
+let frame = 0;
+
+const sizes = {
+  pen: 5, ink: 3, pencil: 4, water: 30, eraser: 24, marker: 22
+};
+
+try {
+  const saved = JSON.parse(localStorage.getItem(KEY) || 'null');
+  if (saved && Array.isArray(saved.strokes) && saved.camera) {
+    strokes = saved.strokes;
+    camera = saved.camera;
+    $('status').textContent = 'Доска восстановлена';
+  }
+} catch {
+  $('status').textContent = 'Не удалось восстановить доску';
+}
+
+function save() {
+  try {
+    localStorage.setItem(KEY, JSON.stringify({ strokes, camera }));
+    $('status').textContent = 'Сохранено на этом устройстве';
+  } catch {
+    $('status').textContent = 'Не сохранено: хранилище недоступно или заполнено';
+  }
+}
+
+function schedule() {
+  if (!frame) frame = requestAnimationFrame(() => {
+    frame = 0;
+    render();
+  });
+}
+
+function resize() {
+  const r = canvas.getBoundingClientRect();
+  width = r.width;
+  height = r.height;
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+  schedule();
+}
+new ResizeObserver(resize).observe($('board'));
+
+function local(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+function world(p) {
+  return {
+    x: (p.x - camera.x) / camera.z,
+    y: (p.y - camera.y) / camera.z
+  };
+}
+
+function thickness(s, p) {
+  const pressure = Math.pow(Math.max(0.02, p.p), s.sensitivity);
+  if (s.tool === 'pen') return s.size * (0.12 + 1.5 * pressure);
+  if (s.tool === 'ink') return s.size * (0.75 + 0.5 * pressure);
+  if (s.tool === 'pencil') return s.size * (0.4 + 0.7 * pressure);
+  if (s.tool === 'water') return s.size * (0.5 + pressure);
+  return s.size;
+}
+
+function drawStroke(s) {
+  const pts = s.points;
+  if (!pts.length) return;
+
+  ctx.globalCompositeOperation =
+    s.tool === 'eraser' ? 'destination-out' : 'source-over';
+  ctx.strokeStyle = s.color;
+  ctx.fillStyle = s.color;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  function alpha(p) {
+    if (s.tool === 'water') return 0.10;
+    if (s.tool === 'marker') return 0.25;
+    if (s.tool === 'pencil') return 0.20 + p.p * 0.55;
+    return 1;
+  }
+
+  if (pts.length === 1) { ctx.globalAlpha = alpha(pts[0]);
+    ctx.beginPath();
+    ctx.arc(pts[0].x, pts[0].y, thickness(s, pts[0]) / 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    ctx.globalAlpha = alpha(b);
+    ctx.lineWidth = (thickness(s, a) + thickness(s, b)) / 2;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+
+    // Небольшая детерминированная фактура карандаша.
+    if (s.tool === 'pencil') {
+      ctx.globalAlpha = 0.12;
+      const offset = Math.sin(i * 17.3) * s.size * 0.3;
+      ctx.lineWidth = Math.max(0.3, s.size * 0.12);
+      ctx.beginPath();
+      ctx.moveTo(a.x + offset, a.y);
+      ctx.lineTo(b.x + offset, b.y);
+      ctx.stroke();
+    }
+  }
+}
+
+function render() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(
+    dpr * camera.z, 0, 0, dpr * camera.z,
+    dpr * camera.x, dpr * camera.y
+  );
+  for (const s of strokes) drawStroke(s);
+  if (active) drawStroke(active);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+function addPoint(e) {
+  const p = world(local(e));
+  p.p = e.pointerType === 'pen' ? e.pressure : 0.5;
+  active.points.push(p);
+  if (e.pointerType === 'pen') {
+    $('status').textContent = 'Нажим: ' + Math.round(e.pressure * 100) + '%';
+  }
+}
+
+function resetGesture() {
+  if (touches.size !== 2) {
+    gesture = null;
+    return;
+  }
+  const [a, b] = [...touches.values()];
+  gesture = {
+    mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+    distance: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+    camera: { ...camera }
+  };
+}
+
+canvas.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'touch') {
+    if (active) return;
+    canvas.setPointerCapture(e.pointerId);
+    touches.set(e.pointerId, local(e));
+    resetGesture();
+    return;
+  }
+
+  if (active || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  canvas.setPointerCapture(e.pointerId);
+  touches.clear();
+  gesture = null;
+  activePointer = e.pointerId;
+  active = {
+    tool, color,
+    size: Number($('size').value),
+    sensitivity: Number($('sensitivity').value),
+    points: []
+  };
+  addPoint(e);
+  schedule();
+});
+
+canvas.addEventListener('pointermove', e => {
+  if (e.pointerType === 'touch') {
+    if (active || !touches.has(e.pointerId)) return;
+    touches.set(e.pointerId, local(e));
+    if (gesture && touches.size === 2) {
+      const [a, b] = [...touches.values()];
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const distance = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
+      const g = gesture;
+      camera.z = Math.min(8, Math.max(0.15,
+        g.camera.z * distance / g.distance));
+      const ratio = camera.z / g.camera.z;
+      camera.x = mid.x - (g.mid.x - g.camera.x) * ratio;
+      camera.y = mid.y - (g.mid.y - g.camera.y) * ratio;
+      schedule();
+    }
+    return;
+  }
+
+  if (!active || activePointer !== e.pointerId) return;
+  const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+  for (const sample of (events.length ? events : [e])) addPoint(sample);
+  schedule();
+});
+
+function finish(e) {
+  if (touches.delete(e.pointerId)) {
+    resetGesture();
+    save();
+  }
+  if (active && activePointer === e.pointerId) {
+    strokes.push(active);
+    active = null;
+    activePointer = null;
+    save();
+    schedule();
+  }
+}
+canvas.addEventListener('pointerup', finish);
+canvas.addEventListener('pointercancel', finish);
+canvas.addEventListener('lostpointercapture', finish);
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (active) return;
+  const p = local(e);
+  const anchor = world(p);
+  camera.z = Math.max(0.15, Math.min(8,
+    camera.z * Math.exp(-e.deltaY * 0.002)));
+  camera.x = p.x - anchor.x * camera.z;
+  camera.y = p.y - anchor.y * camera.z;
+  schedule();
+}, { passive: false });
+
+$('tools').addEventListener('click', e => {
+  const button = e.target.closest('[data-tool]');
+  if (!button) return; sizes[tool] = Number($('size').value);
+  tool = button.dataset.tool;
+  $('size').value = sizes[tool];
+  document.querySelectorAll('[data-tool]').forEach(b =&gt;
+    b.classList.toggle('active', b.dataset.tool === tool));
+});
+
+$('undo').onclick = () =&gt; {
+  if (active) return;
+  strokes.pop();
+  save();
+  schedule();
+};
+$('home').onclick = () =&gt; {
+  camera = { x: 0, y: 0, z: 1 };
+  save();
+  schedule();
+};
+
+function setColor(value</code></pre><pre><code class="language-html">) {
+  if (!/^#[0-9a-f]{6}$/i.test(value)) return;
+  color = value.toLowerCase();
+  $('sample').style.background = color;
+  $('hex').value = color;
+}
+
+let hue = 256;
+let saturation = 51;
+let lightness = 55;
+
+function hslToHex(h, s, l) {
+  s /= 100;
+  l /= 100;
+
+  const a = s * Math.min(l, 1 - l);
+  const channel = n =&gt; {
+    const k = (n + h / 30) % 12;
+    const value = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(value * 255).toString(16).padStart(2, '0');
+  };
+
+  return '#' + channel(0) + channel(8) + channel(4);
+}
+
+function hexToHsl(hex) {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  const l = (max + min) / 2;
+
+  let h = 0;
+  let s = 0;
+
+  if (delta !== 0) {
+    s = delta / (1 - Math.abs(2 * l - 1));
+
+    if (max === r) h = ((g - b) / delta) % 6;
+    else if (max === g) h = (b - r) / delta + 2;
+    else h = (r - g) / delta + 4;
+
+    h = (h * 60 + 360) % 360;
+  }
+
+  return { h, s: s * 100, l: l * 100 };
+}
+
+function updateDot() {
+  const angle = hue * Math.PI / 180;
+  const radius = saturation / 100 * 50;
+
+  $('dot').style.left = (50 + Math.cos(angle) * radius) + '%';
+  $('dot').style.top = (50 + Math.sin(angle) * radius) + '%';
+  $('dot').style.background = color;
+}
+
+function syncPalette() {
+  const hsl = hexToHsl(color);
+  hue = hsl.h;
+  saturation = hsl.s;
+  lightness = hsl.l;
+
+  // Позволяем выбрать также чистый белый и чёрный.
+  $('lightness').min = 0;
+  $('lightness').max = 100;
+  $('lightness').value = lightness;
+  updateDot();
+}
+
+function applyPaletteColor() {
+  setColor(hslToHex(hue, saturation, lightness));
+  updateDot();
+}
+
+// Рисуем точную HSL-палитру вместо приблизительного CSS-градиента.
+const wheelCanvas = document.createElement('canvas');
+wheelCanvas.width = 240;
+wheelCanvas.height = 240;
+
+Object.assign(wheelCanvas.style, {
+  position: 'absolute',
+  inset: '0',
+  width: '100%',
+  height: '100%',
+  borderRadius: '50%',
+  pointerEvents: 'none'
+});
+
+$('wheel').style.background = 'none';
+$('wheel').insertBefore(wheelCanvas, $('dot'));
+
+function paintWheel() {
+  const wheelCtx = wheelCanvas.getContext('2d');
+  const size = wheelCanvas.width;
+  const radius = size / 2;
+  const image = wheelCtx.createImageData(size, size);
+
+  for (let y = 0; y &lt; size; y++) {
+    for (let x = 0; x &lt; size; x++) {
+      const dx = x + 0.5 - radius;
+      const dy = y + 0.5 - radius;
+      const distance = Math.hypot(dx, dy);
+
+      if (distance &gt; radius) continue;
+
+      const h = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+      const s = Math.min(100, distance / radius * 100);
+      const hex = hslToHex(h, s, lightness);
+      const index = (y * size + x) * 4;
+
+      image.data[index] = parseInt(hex.slice(1, 3), 16);
+      image.data[index + 1] = parseInt(hex.slice(3, 5), 16);
+      image.data[index + 2] = parseInt(hex.slice(5, 7), 16);
+      image.data[index + 3] = 255;
+    }
+  }
+
+  wheelCtx.putImageData(image, 0, 0);
+}
+
+let wheelPointer = null;
+
+function pickWheelColor(e) {
+  const rect = $('wheel').getBoundingClientRect();
+  const dx = e.clientX - rect.left - rect.width / 2;
+  const dy = e.clientY - rect.top - rect.height / 2;
+  const radius = Math.min(rect.width, rect.height) / 2;
+
+  hue = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+  saturation = Math.min(100, Math.hypot(dx, dy) / radius * 100);
+  applyPaletteColor();
+}
+
+$('wheel').addEventListener('pointerdown', e =&gt; {
+  if (wheelPointer !== null) return;
+  if (e.pointerType === 'mouse' &amp;&amp; e.button !== 0) return;
+
+  e.preventDefault();
+  wheelPointer = e.pointerId;
+  $('wheel').setPointerCapture(e.pointerId);
+  pickWheelColor(e);
+});
+
+$('wheel').addEventListener('pointermove', e =&gt; {
+  if (e.pointerId !== wheelPointer) return; pickWheelColor(e);
+});
+
+function finishWheel(e) {
+  if (e.pointerId === wheelPointer) wheelPointer = null;
+}
+
+$('wheel').addEventListener('pointerup', finishWheel);
+$('wheel').addEventListener('pointercancel', finishWheel);
+$('wheel').addEventListener('lostpointercapture', finishWheel);
+
+$('lightness').addEventListener('input', () =&gt; {
+  lightness = Number($('lightness').value);
+  applyPaletteColor();
+  paintWheel();
+});
+
+$('hex').addEventListener('input', () =&gt; {
+  let value = $('hex').value.trim();
+  if (!value.startsWith('#')) value = '#' + value;
+
+  if (/^#[0-9a-f]{6}$/i.test(value)) {
+    setColor(value);
+    syncPalette();
+    paintWheel();
+  }
+});
+
+$('hex').addEventListener('blur', () =&gt; {
+  $('hex').value = color;
+});
+
+const presetColors = [
+  '#302b40',
+  '#7252c7',
+  '#e697b4',
+  '#efc56c',
+  '#83bfa5',
+  '#83afe0'
+];
+
+for (const value of presetColors) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.style.background = value;
+  button.title = value;
+  button.setAttribute('aria-label', 'Выбрать цвет ' + value);
+
+  button.onclick = () =&gt; {
+    setColor(value);
+    syncPalette();
+    paintWheel();
+  };
+
+  $('swatches').appendChild(button);
+}
+
+$('colorButton').onclick = () =&gt; {
+  syncPalette();
+  $('palette').showModal();
+  paintWheel();
+};
+
+$('closePalette').onclick = () =&gt; {
+  $('palette').close();
+};
+
+// Не показываем меню браузера при долгом касании холста.
+canvas.addEventListener('contextmenu', e =&gt; e.preventDefault());
+
+// Дополнительное сохранение при сворачивании браузера.
+function persistBeforeLeaving() {
+  if (active) {
+    strokes.push(active);
+    active = null;
+    activePointer = null;
+    schedule();
+  }
+
+  touches.clear();
+  gesture = null;
+  save();
+}
+
+document.addEventListener('visibilitychange', () =&gt; {
+  if (document.visibilityState === 'hidden') {
+    persistBeforeLeaving();
+  }
+});
+
+window.addEventListener('pagehide', persistBeforeLeaving);
+
+setColor(color);
+syncPalette();
+resize();
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre>
